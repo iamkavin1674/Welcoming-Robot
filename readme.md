@@ -1,9 +1,9 @@
-# 🤖 Autonomous Navigation Robot
+# 🤖 Welcome Robot
 
 ## 🚧 Project Status
 
 This project is currently in the **development phase**.  
-The focus is on building a modular and scalable autonomous navigation system using ROS 2 and Python.
+The focus is on building a modular and scalable autonomous welcoming robot system using ROS 2 and Python.
 
 > ⚠️ Some components described below (e.g., advanced control and learning methods) are planned and not fully implemented yet.
 
@@ -11,14 +11,14 @@ The focus is on building a modular and scalable autonomous navigation system usi
 
 ## 🧠 Overview
 
-This project aims to develop an **indoor autonomous robot** capable of:
+This project aims to develop an **indoor autonomous welcoming robot** capable of:
 
-- Mapping unknown environments (SLAM)  
-- Localizing itself within a map  
-- Planning optimal paths  
-- Avoiding obstacles in real time  
-- Controlling an omnidirectional drive system  
-
+* Detects approaching visitors using computer vision and initiates interactive greetings.
+* Provides voice assistance and displays QR codes for visitor registration, Wi-Fi access, and company information.
+* Navigates autonomously to predefined office locations using ROS 2, SLAM, and Nav2.
+* Performs obstacle avoidance, sensor fusion, and automatic recovery from navigation failures.
+* Integrates with AWS cloud services for employee management, visitor logging, and remote monitoring.
+  
 The system is designed with a **modular architecture** to allow easy integration of hardware and future expansion.
 
 ---
