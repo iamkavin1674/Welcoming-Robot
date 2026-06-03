@@ -27,51 +27,77 @@ The system is designed with a **modular architecture** to allow easy integration
 
 ```mermaid
 graph TB
-    subgraph Sensors
-        IR["8x IR Range"]
-        US["8x Ultrasonic Range"]
-        CAM["ESP32 Camera"]
-    end
+subgraph Sensors
+IR["8x IR Range"]
+US["8x Ultrasonic Range"]
+OV["OV2710 USB Camera"]
+FIT["FIT0701 USB Camera"]
+end
 
-    subgraph SensorFusionNode
-        SF["core/fusion.py"]
-    end
+```
+subgraph VisionNode
+    FD["Face Detection"]
+    QR["QR Detection"]
+    MK["ArUco / AprilTag Detection"]
+end
 
-    subgraph NavigationNode
-        SM["State Machine"]
-        AS["core/astar.py"]
-        OC["core/omni_controller.py"]
-        N2["Nav2 Action Client"]
-    end
+subgraph SensorFusionNode
+    SF["core/fusion.py"]
+end
 
-    subgraph RecoveryNode
-        REC["Stop / Backup / Rotate"]
-    end
+subgraph NavigationNode
+    SM["State Machine"]
+    AS["core/astar.py"]
+    OC["core/omni_controller.py"]
+    N2["Nav2 Action Client"]
+end
 
-    subgraph CmdVelMuxNode
-        MUX["Priority Arbitration"]
-    end
+subgraph RecoveryNode
+    REC["Stop / Backup / Rotate"]
+end
 
-    subgraph External
-        SLAM["slam_toolbox"]
-        TF["TF2"]
-    end
+subgraph CmdVelMuxNode
+    MUX["Priority Arbitration"]
+end
 
-    IR --> SF
-    US --> SF
-    CAM --> SF
-    SF -->|danger_score, min_range, proximity_factor| SM
-    SLAM -->|/map OccupancyGrid| SM
-    TF -->|map to base_link| SM
-    SM --> AS
-    AS -->|path| OC
-    OC -->|/cmd_vel_nav P2| MUX
-    SM -->|/recovery/trigger| REC
-    REC -->|/recovery/status| SM
-    REC -->|/cmd_vel_recovery P1| MUX
-    SM -.->|/cmd_vel_emergency P0| MUX
-    MUX -->|/cmd_vel| Robot["Robot Motors"]
-    SM -.->|optional| N2
+subgraph External
+    SLAM["slam_toolbox"]
+    TF["TF2"]
+end
+
+OV --> FD
+OV --> QR
+
+FIT --> MK
+
+IR --> SF
+US --> SF
+
+FD -->|visitor_detected| SM
+QR -->|qr_detected| SM
+MK -->|marker_pose| SM
+
+SF -->|danger_score,min_range,proximity_factor| SM
+
+SLAM -->|/map OccupancyGrid| SM
+TF -->|map to base_link| SM
+
+SM --> AS
+AS -->|path| OC
+
+OC -->|/cmd_vel_nav P2| MUX
+
+SM -->|/recovery/trigger| REC
+REC -->|/recovery/status| SM
+REC -->|/cmd_vel_recovery P1| MUX
+
+SM -.->|/cmd_vel_emergency P0| MUX
+
+MUX -->|/cmd_vel| Robot["Robot Motors"]
+
+SM -.->|optional| N2
+```
+
 ```
     
 
