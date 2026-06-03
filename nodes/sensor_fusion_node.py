@@ -17,7 +17,9 @@ Publications
 import sys
 import os
 
+# pyrefly: ignore [missing-import]
 import rclpy
+# pyrefly: ignore [missing-import]
 from rclpy.node import Node
 from sensor_msgs.msg import Range, Image
 from std_msgs.msg import Float32

@@ -77,6 +77,7 @@ class RecoveryNode(Node):
         if msg.data and self._phase == _Phase.IDLE:
             self._attempt += 1
             if self._attempt > MAX_RECOVERY_ATTEMPTS:
+                
                 self.get_logger().error(
                     f"Max recovery attempts ({MAX_RECOVERY_ATTEMPTS}) exhausted."
                 )
