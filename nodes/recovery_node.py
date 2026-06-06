@@ -1,17 +1,17 @@
 """
-nodes/recovery_node.py — ROS 2 node that handles stuck / blocked
+nodes/recovery_node.py -- ROS 2 node that handles stuck / blocked
 situations with a simple behaviour sequence:
 
-    1. Stop  → zero velocity for a pause.
-    2. Back up → small negative linear.x pulse.
-    3. Rotate → slow angular.z sweep to refresh sensors.
-    4. Report → publish "recovered" or "failed" on /recovery/status.
+    1. Stop  -> zero velocity for a pause.
+    2. Back up -> small negative linear.x pulse.
+    3. Rotate -> slow angular.z sweep to refresh sensors.
+    4. Report -> publish "recovered" or "failed" on /recovery/status.
 
 Subscriptions
-    /recovery/trigger        std_msgs/Bool   (True → begin recovery)
+    /recovery/trigger        std_msgs/Bool   (True = begin recovery)
 
 Publications
-    /cmd_vel                 geometry_msgs/Twist
+    /cmd_vel_recovery        geometry_msgs/Twist  (via cmd_vel_mux)
     /recovery/status         std_msgs/String
 """
 

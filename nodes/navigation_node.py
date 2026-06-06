@@ -4,8 +4,8 @@ nodes/navigation_node.py -- The main brain: global planner + local
 controller + Nav2 action client integration.
 
 State Machine
-    IDLE → PLANNING → FOLLOWING → GOAL_REACHED
-                   ↘ RECOVERY ↗
+    IDLE -> PLANNING -> FOLLOWING -> GOAL_REACHED
+                    -> RECOVERY ->
 
 Subscriptions
     /map                         nav_msgs/OccupancyGrid
@@ -17,7 +17,7 @@ Subscriptions
     /recovery/status             std_msgs/String
 
 Publications
-    /cmd_vel                     geometry_msgs/Twist
+    /cmd_vel_nav                 geometry_msgs/Twist   (via cmd_vel_mux)
     /planned_path                nav_msgs/Path
     /recovery/trigger            std_msgs/Bool
 

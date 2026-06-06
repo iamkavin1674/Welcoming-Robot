@@ -1,47 +1,72 @@
-# 🤖 Welcome Robot
+# Welcome Robot
 
-## 🚧 Project Status
+## Project Status
 
 This project is currently in the **development phase**.  
-The focus is on building a modular and scalable autonomous welcoming robot system using ROS 2 and Python.
+The focus is on building a modular and scalable autonomous receptionist robot system using ROS 2 and Python.
 
-> ⚠️ Some components described below (e.g., advanced control and learning methods) are planned and not fully implemented yet.
+> Some components described below are planned and not fully implemented yet.
 
 ---
 
-## 🧠 Overview
+## Overview
 
-This project aims to develop an **indoor autonomous welcoming robot** capable of:
+This project develops an **indoor autonomous receptionist robot** capable of:
 
-* Detects approaching visitors using computer vision and initiates interactive greetings.
-* Provides voice assistance and displays QR codes for visitor registration, Wi-Fi access, and company information.
-* Navigates autonomously to predefined office locations using ROS 2, SLAM, and Nav2.
-* Performs obstacle avoidance, sensor fusion, and automatic recovery from navigation failures.
-* Integrates with AWS cloud services for employee management, visitor logging, and remote monitoring.
-  
+* Detecting approaching visitors using the OV2710 USB camera (face detection)
+* Greeting visitors and scanning QR codes for destination routing
+* Navigating autonomously to predefined office locations using ROS 2 and Nav2
+* Detecting ArUco/AprilTag visual markers via the FIT0701 USB camera
+* Performing obstacle avoidance with IR, ultrasonic, and camera-based sensor fusion
+* Automatic recovery from navigation failures
+* Integration with AWS cloud services for employee management and visitor logging (planned)
+
 The system is designed with a **modular architecture** to allow easy integration of hardware and future expansion.
 
 ---
 
-## 🏗️ System Architecture
+## Hardware
+
+| Component | Purpose |
+|---|---|
+| Raspberry Pi 5 | Main compute |
+| OV2710 2MP USB Camera | Face detection, QR scanning, visitor presence |
+| FIT0701 USB Camera | Navigation assist, ArUco/AprilTag detection |
+| 8x IR Range Sensors | Close-range obstacle detection |
+| 8x Ultrasonic Sensors | Medium-range obstacle detection |
+| NanoClaw Motor Controller | Omnidirectional drive |
+| TCS3200 Color Sensors | Boundary detection (planned) |
+
+---
+
+## System Architecture
 
 ```mermaid
 graph TB
-    subgraph Sensors
-        IR["8x IR Range"]
-        US["8x Ultrasonic Range"]
-        OV["OV2710 USB Camera"]
-        FIT["FIT0701 USB Camera"]
+    subgraph USB_Cameras["USB Cameras (RPi5)"]
+        OV["OV2710<br/>Interaction"]
+        FIT["FIT0701<br/>Navigation"]
     end
 
-    subgraph VisionNode
-        FD["Face Detection"]
-        QR["QR Detection"]
-        MK["ArUco / AprilTag Detection"]
+    subgraph InteractionCameraNode
+        IV["core/vision_interaction.py<br/>Face Detection + QR"]
+    end
+
+    subgraph NavCameraNode
+        NV["core/vision_navigation.py<br/>ArUco + Obstacle Density"]
+    end
+
+    subgraph ReceptionistNode
+        RX["Greeting Workflow<br/>State Machine"]
+    end
+
+    subgraph RangeSensors["Range Sensors"]
+        IR["8x IR Range"]
+        US["8x Ultrasonic Range"]
     end
 
     subgraph SensorFusionNode
-        SF["core/fusion.py"]
+        SF["core/fusion.py<br/>IR + US + NavCam"]
     end
 
     subgraph NavigationNode
@@ -51,180 +76,218 @@ graph TB
         N2["Nav2 Action Client"]
     end
 
-    subgraph RecoveryNode
-        REC["Stop / Backup / Rotate"]
-    end
-
     subgraph CmdVelMuxNode
         MUX["Priority Arbitration"]
     end
 
-    subgraph External
-        SLAM["slam_toolbox"]
-        TF["TF2"]
+    subgraph RecoveryNode
+        REC["Stop / Backup / Rotate"]
     end
 
-    OV --> FD
-    OV --> QR
-    FIT --> MK
+    OV -->|cv2.VideoCapture| IV
+    FIT -->|cv2.VideoCapture| NV
+
+    IV -->|/visitor/detected Bool| RX
+    IV -->|/visitor/qr_data String| RX
+    IV -->|/visitor/face_count Int32| RX
+
+    NV -->|/nav_camera/obstacle_density Float32| SF
+    NV -->|/nav_camera/markers String| SM
+
+    RX -->|/goal_pose PoseStamped| SM
 
     IR --> SF
     US --> SF
-
-    FD -->|visitor_detected| SM
-    QR -->|qr_detected| SM
-    MK -->|marker_pose| SM
-
-    SF -->|danger_score,min_range,proximity_factor| SM
-
-    SLAM -->|/map OccupancyGrid| SM
-    TF -->|map to base_link| SM
+    SF -->|danger_score, proximity_factor| SM
 
     SM --> AS
     AS -->|path| OC
-
     OC -->|/cmd_vel_nav P2| MUX
-
     SM -->|/recovery/trigger| REC
-    REC -->|/recovery/status| SM
     REC -->|/cmd_vel_recovery P1| MUX
-
-    SM -.->|/cmd_vel_emergency P0| MUX
-
-    MUX -->|/cmd_vel| Robot["Robot Motors"]
-
+    MUX -->|/cmd_vel| Motors["Robot Motors"]
+    REC -->|/recovery/status| SM
     SM -.->|optional| N2
-
 ```
 
+---
+
+## Receptionist Workflow
+
+The robot follows a five-state greeting workflow:
+
+```
+IDLE -> GREETING -> WAITING_QR -> NAVIGATING -> ARRIVED -> IDLE
 ```
 
+1. **IDLE** -- Waits for a visitor (face detection via OV2710)
+2. **GREETING** -- Publishes greeting message for TTS
+3. **WAITING_QR** -- Scans QR code for destination name (30s timeout)
+4. **NAVIGATING** -- Sends goal to Nav2 and follows path
+5. **ARRIVED** -- Announces arrival and returns to idle
+
+### Named Destinations
+
+| Name | Description |
+|---|---|
+| `reception` | Main reception area |
+| `conference_room` | Conference room |
+| `hr_room` | HR department |
+| `manager_cabin` | Manager's office |
+
+---
+
+## Velocity Priority (cmd_vel Mux)
+
+| Priority | Topic | Source | When Active |
+|---|---|---|---|
+| **P0** (highest) | `/cmd_vel_emergency` | Any node | Imminent collision |
+| **P1** | `/cmd_vel_recovery` | RecoveryNode | Recovery maneuvers |
+| **P2** (lowest) | `/cmd_vel_nav` | NavigationNode | Normal path following |
+
+---
+
+## Technology Stack
+
+| Layer | Technology |
+|---|---|
+| Middleware | ROS 2 (Humble/Jazzy) |
+| Language | Python |
+| Vision | OpenCV (Haar cascade, ArUco, QR) |
+| Navigation | Nav2 + custom A* planner |
+| SLAM | slam_toolbox |
+| Motor Controller | NanoClaw |
+| Compute | Raspberry Pi 5 |
+
+---
+
+## Project Structure
+
 ```
-    
+Welcoming-Robot/
+├── config.py                              # All tuneable parameters
+├── config/
+│   └── slam_toolbox_params.yaml           # SLAM configuration
+├── core/
+│   ├── __init__.py
+│   ├── astar.py                           # A* global planner
+│   ├── fusion.py                          # Sensor fusion (IR + US + nav cam)
+│   ├── omni_controller.py                 # Holonomic pure pursuit
+│   ├── vision_interaction.py              # Face detection + QR scanning
+│   └── vision_navigation.py              # ArUco detection + obstacle density
+├── launch/
+│   └── navigation_launch.py               # ROS 2 launch file (8 nodes)
+├── nodes/
+│   ├── __init__.py
+│   ├── cmd_vel_mux_node.py                # Velocity priority mux
+│   ├── interaction_camera_node.py         # OV2710 driver node
+│   ├── nav_camera_node.py                 # FIT0701 driver node
+│   ├── navigation_node.py                 # Main brain (state machine)
+│   ├── receptionist_node.py               # Greeting workflow orchestrator
+│   ├── recovery_node.py                   # Stuck handling
+│   └── sensor_fusion_node.py              # Raw sensor -> fused output
+└── utils/
+    ├── __init__.py
+    ├── geometry.py                         # Math helpers
+    ├── grid.py                             # OccupancyGrid utilities
+    └── path.py                             # Path pruning / smoothing
+```
 
 ---
 
-## ⚙️ Technology Stack
+## ROS Topics
 
-- Middleware: ROS 2  
-- Programming Language: Python  
-- Motor Controller: NanoClaw  
-- SLAM: SLAM Toolbox (planned)  
-- Simulation (planned): Gazebo, RViz  
+### Camera Topics (New)
 
----
+| Topic | Type | Publisher | Subscriber |
+|---|---|---|---|
+| `/interaction_camera/image_raw` | Image | InteractionCameraNode | RViz |
+| `/visitor/detected` | Bool | InteractionCameraNode | ReceptionistNode |
+| `/visitor/face_count` | Int32 | InteractionCameraNode | ReceptionistNode |
+| `/visitor/qr_data` | String | InteractionCameraNode | ReceptionistNode |
+| `/nav_camera/image_raw` | Image | NavCameraNode | RViz |
+| `/nav_camera/obstacle_density` | Float32 | NavCameraNode | SensorFusionNode |
+| `/nav_camera/markers` | String | NavCameraNode | NavigationNode |
 
-## 🧩 Core Components
+### Navigation Topics
 
-### 1. Sensor Fusion (In Progress)
-- Combines IR, ultrasonic, and camera data  
-- Produces unified obstacle information  
+| Topic | Type | Publisher | Subscriber |
+|---|---|---|---|
+| `/cmd_vel_nav` | Twist | NavigationNode | CmdVelMuxNode |
+| `/cmd_vel_recovery` | Twist | RecoveryNode | CmdVelMuxNode |
+| `/cmd_vel_emergency` | Twist | Any | CmdVelMuxNode |
+| `/cmd_vel` | Twist | CmdVelMuxNode | Robot HW |
+| `/goal_pose` | PoseStamped | ReceptionistNode / RViz | NavigationNode |
+| `/planned_path` | Path | NavigationNode | RViz |
+| `/obstacle/danger_score` | Float32 | SensorFusionNode | NavigationNode |
+| `/obstacle/min_range` | Float32 | SensorFusionNode | NavigationNode |
+| `/obstacle/proximity_factor` | Float32 | SensorFusionNode | NavigationNode |
 
----
+### Receptionist Topics
 
-### 2. Localization & Mapping (Planned)
-- SLAM-based mapping  
-- Robot pose estimation  
-
----
-
-### 3. Global Path Planning (In Progress)
-- A* algorithm on occupancy grid  
-- Generates path from start to goal  
-
----
-
-### 4. Local Motion Control (In Progress)
-- Omnidirectional control:
-  - `linear.x`, `linear.y`, `angular.z`  
-- Path tracking using Pure Pursuit–style logic  
-
----
-
-### 5. Obstacle Avoidance (In Progress)
-- Reactive obstacle handling  
-- Speed adjustment near obstacles  
-
----
-
-### 6. Motor Interface (Planned)
-- Hardware abstraction layer  
-- Integration with NanoClaw controller  
+| Topic | Type | Publisher | Subscriber |
+|---|---|---|---|
+| `/receptionist/status` | String | ReceptionistNode | UI / Logger |
+| `/receptionist/greeting` | String | ReceptionistNode | TTS (future) |
 
 ---
 
 ## How to Launch
 
 ```bash
-# From the project root:
+# Full stack (all 8 nodes + SLAM):
 ros2 launch launch/navigation_launch.py
 
-# Or run nodes individually:
+# Individual nodes:
+python3 nodes/interaction_camera_node.py
+python3 nodes/nav_camera_node.py
+python3 nodes/receptionist_node.py
 python3 nodes/sensor_fusion_node.py
 python3 nodes/navigation_node.py
 python3 nodes/recovery_node.py
+python3 nodes/cmd_vel_mux_node.py
 ```
 
-## Send a Goal
+## Send a Goal Manually
 
 ```bash
 ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped \
   "{header: {frame_id: 'map'}, pose: {position: {x: 2.0, y: 1.5, z: 0.0}}}"
 ```
 
-## 📊 Current Progress
+---
 
-| Component              | Status         |
-|----------------------|---------------|
-| Architecture Design  | ✅ Completed   |
-| ROS 2 Setup          | ✅ Completed   |
-| Core Modules         | 🟡 In Progress |
-| Path Planning        | 🟡 In Progress |
-| Controller           | 🟡 In Progress |
-| Sensor Fusion        | 🟡 In Progress |
-| SLAM Integration     | ⏳ Pending     |
-| Hardware Integration | ⏳ Pending     |
-| Simulation           | ⏳ Pending     |
-| Real-world Testing   | ⏳ Pending     |
+## Current Progress
+
+| Component | Status |
+|---|---|
+| Architecture Design | Completed |
+| ROS 2 Setup | Completed |
+| Core Modules | Completed |
+| Dual Camera Integration | Completed |
+| Receptionist Workflow | Completed |
+| Path Planning (A*) | Completed |
+| Controller (Pure Pursuit) | Completed |
+| Sensor Fusion | Completed |
+| cmd_vel Mux | Completed |
+| SLAM Integration | Pending |
+| Hardware Integration | Pending |
+| Simulation (Gazebo) | Pending |
+| Real-world Testing | Pending |
 
 ---
 
-## 🗂️ Project Structure
+## Design Principles
 
-nodes/ → ROS 2 nodes
-core/ → planning and control logic
-utils/ → helper functions
-config.py → parameters
-
----
-
-## 🎯 Current Focus
-
-- Developing navigation logic (A* + controller)  
-- Improving modular structure  
-- Preparing for simulation testing  
+- Modular and scalable architecture
+- Hardware-independent logic (core/ has zero ROS imports)
+- Clear separation of concerns (utils -> core -> nodes)
+- One camera per node, one responsibility per module
+- Graceful degradation (camera failure does not crash navigation)
+- Priority-based velocity arbitration (safety first)
 
 ---
 
-## 🚀 Future Roadmap
-
-- Integrate SLAM Toolbox  
-- Run simulations in Gazebo/RViz  
-- Implement hardware system  
-- Tune navigation and control  
-- Add advanced features (learning, optimization)  
-
----
-
-## 💡 Design Principles
-
-- Modular and scalable architecture  
-- Hardware-independent logic  
-- Clear separation of concerns  
-- Iterative development  
-
----
-
-## ⭐ Note
+## Note
 
 This repository reflects an **ongoing development process** focused on building a strong foundation before full deployment.
