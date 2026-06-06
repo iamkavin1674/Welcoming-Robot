@@ -1,10 +1,15 @@
+# -*- coding: utf-8 -*-
 """
-launch/navigation_launch.py — ROS 2 launch file that brings up:
+launch/navigation_launch.py -- ROS 2 launch file that brings up:
 
   1. slam_toolbox  (online_async_launch.py with custom params)
   2. sensor_fusion_node
   3. navigation_node
   4. recovery_node
+  5. cmd_vel_mux_node
+  6. interaction_camera_node  (OV2710)
+  7. nav_camera_node          (FIT0701)
+  8. receptionist_node
 
 Usage
 -----
@@ -14,19 +19,23 @@ Usage
 import os
 
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
+from launch.actions import (
+    IncludeLaunchDescription,
+    DeclareLaunchArgument,
+    ExecuteProcess,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node as LaunchNode
 from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
-    # ── Paths ──────────────────────────────────
+    # -- Paths -----------------------------------------
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     slam_params_file = os.path.join(project_dir, "config", "slam_toolbox_params.yaml")
+    nodes_dir = os.path.join(project_dir, "nodes")
 
-    # ── Launch arguments ──────────────────────
+    # -- Launch arguments ------------------------------
     use_sim_time_arg = DeclareLaunchArgument(
         "use_sim_time",
         default_value="false",
@@ -34,7 +43,7 @@ def generate_launch_description():
     )
     use_sim_time = LaunchConfiguration("use_sim_time")
 
-    # ── 1. SLAM Toolbox ──────────────────────
+    # -- 1. SLAM Toolbox --------------------------------
     slam_toolbox_launch = None
     try:
         slam_share = get_package_share_directory("slam_toolbox")
@@ -48,63 +57,26 @@ def generate_launch_description():
             }.items(),
         )
     except Exception:
-        # slam_toolbox may not be installed — warn at runtime
         pass
 
-    # ── 2. Sensor Fusion Node ────────────────
-    sensor_fusion = LaunchNode(
-        package=None,                       # standalone script, not a ROS pkg
-        executable=None,
-        name="sensor_fusion_node",
-        output="screen",
-        parameters=[{"use_sim_time": use_sim_time}],
-        # Launch as a Python script
-        prefix=f"python3 {os.path.join(project_dir, 'nodes', 'sensor_fusion_node.py')}",
-    )
+    # -- Helper: build an ExecuteProcess for a node -----
+    def _node_proc(script_name: str, name: str) -> ExecuteProcess:
+        return ExecuteProcess(
+            cmd=["python3", os.path.join(nodes_dir, script_name)],
+            name=name,
+            output="screen",
+        )
 
-    # For standalone Python scripts we use ExecuteProcess instead:
-    from launch.actions import ExecuteProcess
+    # -- 2-8. All project nodes -------------------------
+    sensor_fusion_proc = _node_proc("sensor_fusion_node.py", "sensor_fusion_node")
+    navigation_proc = _node_proc("navigation_node.py", "navigation_node")
+    recovery_proc = _node_proc("recovery_node.py", "recovery_node")
+    cmd_vel_mux_proc = _node_proc("cmd_vel_mux_node.py", "cmd_vel_mux_node")
+    interaction_cam_proc = _node_proc("interaction_camera_node.py", "interaction_camera_node")
+    nav_cam_proc = _node_proc("nav_camera_node.py", "nav_camera_node")
+    receptionist_proc = _node_proc("receptionist_node.py", "receptionist_node")
 
-    sensor_fusion_proc = ExecuteProcess(
-        cmd=[
-            "python3",
-            os.path.join(project_dir, "nodes", "sensor_fusion_node.py"),
-        ],
-        name="sensor_fusion_node",
-        output="screen",
-    )
-
-    # ── 3. Navigation Node ───────────────────
-    navigation_proc = ExecuteProcess(
-        cmd=[
-            "python3",
-            os.path.join(project_dir, "nodes", "navigation_node.py"),
-        ],
-        name="navigation_node",
-        output="screen",
-    )
-
-    # ── 4. Recovery Node ─────────────────────
-    recovery_proc = ExecuteProcess(
-        cmd=[
-            "python3",
-            os.path.join(project_dir, "nodes", "recovery_node.py"),
-        ],
-        name="recovery_node",
-        output="screen",
-    )
-
-    # ── 5. Cmd Vel Mux ───────────────────────
-    cmd_vel_mux_proc = ExecuteProcess(
-        cmd=[
-            "python3",
-            os.path.join(project_dir, "nodes", "cmd_vel_mux_node.py"),
-        ],
-        name="cmd_vel_mux_node",
-        output="screen",
-    )
-
-    # ── Assemble ─────────────────────────────
+    # -- Assemble --------------------------------------
     ld = LaunchDescription()
     ld.add_action(use_sim_time_arg)
 
@@ -115,5 +87,9 @@ def generate_launch_description():
     ld.add_action(navigation_proc)
     ld.add_action(recovery_proc)
     ld.add_action(cmd_vel_mux_proc)
+    ld.add_action(interaction_cam_proc)
+    ld.add_action(nav_cam_proc)
+    ld.add_action(receptionist_proc)
 
     return ld
+
