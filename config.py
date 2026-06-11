@@ -80,36 +80,41 @@ ULTRASONIC_MIN_RANGE: float = 0.02
 ULTRASONIC_MAX_RANGE: float = 4.0
 
 # ─────────────────────────────────────────────
-#  Interaction Camera (OV2710 USB)
+#  Camera (Logitech C270 USB -- single camera)
 # ─────────────────────────────────────────────
-INTERACTION_CAM_DEVICE: int = 0               # /dev/video0
-INTERACTION_CAM_TOPIC: str = "/interaction_camera/image_raw"
-INTERACTION_CAM_WIDTH: int = 640
-INTERACTION_CAM_HEIGHT: int = 480
-INTERACTION_CAM_FPS: int = 15                  # throttled for RPi5 CPU budget
-FACE_DETECTION_MODEL: str = "haarcascade_frontalface_default"
-FACE_MIN_SIZE: tuple = (60, 60)                # px -- ignore tiny detections
-VISITOR_PRESENCE_COOLDOWN: float = 3.0         # seconds before re-triggering
-QR_SCAN_INTERVAL: float = 0.5                  # seconds between QR decode attempts
+CAMERA_DEVICE: int = 0                        # /dev/video0
+CAMERA_WIDTH: int = 640
+CAMERA_HEIGHT: int = 480
+CAMERA_FPS: int = 15                          # capture rate
 
-# ─────────────────────────────────────────────
-#  Navigation Camera (FIT0701 USB)
-# ─────────────────────────────────────────────
-NAV_CAM_DEVICE: int = 2                        # /dev/video2
-NAV_CAM_TOPIC: str = "/nav_camera/image_raw"
-NAV_CAM_WIDTH: int = 640
-NAV_CAM_HEIGHT: int = 480
-NAV_CAM_FPS: int = 15
-NAV_CAM_OBSTACLE_ROI_TOP_RATIO: float = 0.5    # only look at the bottom half
-ARUCO_DICTIONARY: str = "DICT_4X4_50"          # cv2.aruco dictionary name
-ARUCO_MARKER_SIZE: float = 0.10                # metres -- for pose estimation
+# Worker processing rates (Hz)
+NAV_VISION_HZ: float = 10.0                   # obstacle density + ArUco
+INTERACTION_VISION_HZ: float = 5.0            # face detection
+QR_SCAN_INTERVAL: float = 0.5                 # seconds between QR attempts
+
+# Obstacle density (Canny)
+NAV_CAM_OBSTACLE_ROI_TOP_RATIO: float = 0.5   # only look at the bottom half
 CANNY_LOW: int = 50
 CANNY_HIGH: int = 150
+
+# ArUco (on-demand -- disabled by default to save RPi4 CPU)
+ARUCO_DICTIONARY: str = "DICT_4X4_50"         # cv2.aruco dictionary name
+ARUCO_MARKER_SIZE: float = 0.10               # metres -- for pose estimation
+ARUCO_ENABLED_DEFAULT: bool = False            # toggle via /camera/enable_aruco
+
+# Face detection
+FACE_DETECTION_MODEL: str = "haarcascade_frontalface_default"
+FACE_MIN_SIZE: tuple = (60, 60)               # px -- ignore tiny detections
+
+# Camera health monitoring
+CAMERA_FRAME_TIMEOUT: float = 2.0             # seconds before declaring OFFLINE
+CAMERA_RECONNECT_INTERVAL: float = 5.0        # seconds between reconnect attempts
 
 # ─────────────────────────────────────────────
 #  Receptionist Workflow
 # ─────────────────────────────────────────────
 GREETING_MESSAGE: str = "Welcome! Please show your QR code."
+VISITOR_PRESENCE_COOLDOWN: float = 3.0         # seconds before re-triggering
 NAMED_DESTINATIONS: dict = {
     "reception":       {"x": 0.0, "y": 0.0},
     "conference_room": {"x": 5.2, "y": 3.1},

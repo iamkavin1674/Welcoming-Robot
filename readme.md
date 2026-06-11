@@ -13,15 +13,13 @@ The focus is on building a modular and scalable autonomous receptionist robot sy
 
 This project develops an **indoor autonomous receptionist robot** capable of:
 
-* Detecting approaching visitors using the OV2710 USB camera (face detection)
+* Detecting approaching visitors using the Logitech C270 webcam (face detection)
 * Greeting visitors and scanning QR codes for destination routing
 * Navigating autonomously to predefined office locations using ROS 2 and Nav2
-* Detecting ArUco/AprilTag visual markers via the FIT0701 USB camera
+* Detecting ArUco/AprilTag visual markers for docking and landmark localization
 * Performing obstacle avoidance with IR, ultrasonic, and camera-based sensor fusion
 * Automatic recovery from navigation failures
 * Integration with AWS cloud services for employee management and visitor logging (planned)
-
-The system is designed with a **modular architecture** to allow easy integration of hardware and future expansion.
 
 ---
 
@@ -29,9 +27,8 @@ The system is designed with a **modular architecture** to allow easy integration
 
 | Component | Purpose |
 |---|---|
-| Raspberry Pi 5 | Main compute |
-| OV2710 2MP USB Camera | Face detection, QR scanning, visitor presence |
-| FIT0701 USB Camera | Navigation assist, ArUco/AprilTag detection |
+| Raspberry Pi 4 | Main compute |
+| Logitech C270 USB Webcam | Face detection, QR scanning, obstacle density, ArUco (single camera) |
 | 8x IR Range Sensors | Close-range obstacle detection |
 | 8x Ultrasonic Sensors | Medium-range obstacle detection |
 | NanoClaw Motor Controller | Omnidirectional drive |
@@ -43,30 +40,30 @@ The system is designed with a **modular architecture** to allow easy integration
 
 ```mermaid
 graph TB
-    subgraph USB_Cameras["USB Cameras (RPi5)"]
-        OV["OV2710<br/>Interaction"]
-        FIT["FIT0701<br/>Navigation"]
+    subgraph LogitechC270["Logitech C270 (single USB)"]
+        CAM["cv2.VideoCapture"]
     end
 
-    subgraph InteractionCameraNode
-        IV["core/vision_interaction.py<br/>Face Detection + QR"]
-    end
-
-    subgraph NavCameraNode
-        NV["core/vision_navigation.py<br/>ArUco + Obstacle Density"]
+    subgraph CameraNode["camera_node.py (threaded)"]
+        CT["Camera Thread<br/>15 FPS capture"]
+        NQ["nav_queue<br/>maxsize=2"]
+        IQ["interact_queue<br/>maxsize=2"]
+        NW["Nav Worker Thread<br/>10 Hz obstacle density<br/>ArUco on-demand"]
+        IW["Interaction Worker Thread<br/>5 Hz face detection<br/>2 Hz QR scanning"]
+        HM["Health Monitor<br/>1 Hz"]
     end
 
     subgraph ReceptionistNode
-        RX["Greeting Workflow<br/>State Machine"]
+        RX["Greeting Workflow"]
     end
 
     subgraph RangeSensors["Range Sensors"]
-        IR["8x IR Range"]
-        US["8x Ultrasonic Range"]
+        IR["8x IR"]
+        US["8x Ultrasonic"]
     end
 
     subgraph SensorFusionNode
-        SF["core/fusion.py<br/>IR + US + NavCam"]
+        SF["core/fusion.py"]
     end
 
     subgraph NavigationNode
@@ -84,47 +81,60 @@ graph TB
         REC["Stop / Backup / Rotate"]
     end
 
-    OV -->|cv2.VideoCapture| IV
-    FIT -->|cv2.VideoCapture| NV
+    CAM --> CT
+    CT -->|"frame.copy()"| NQ
+    CT -->|"frame.copy()"| IQ
+    NQ --> NW
+    IQ --> IW
 
-    IV -->|/visitor/detected Bool| RX
-    IV -->|/visitor/qr_data String| RX
-    IV -->|/visitor/face_count Int32| RX
+    NW -->|/nav_camera/obstacle_density| SF
+    NW -->|/nav_camera/markers| SM
 
-    NV -->|/nav_camera/obstacle_density Float32| SF
-    NV -->|/nav_camera/markers String| SM
+    IW -->|/visitor/detected| RX
+    IW -->|/visitor/qr_data| RX
 
-    RX -->|/goal_pose PoseStamped| SM
+    HM -->|/camera/status| SM
 
     IR --> SF
     US --> SF
     SF -->|danger_score, proximity_factor| SM
 
-    SM --> AS
-    AS -->|path| OC
-    OC -->|/cmd_vel_nav P2| MUX
-    SM -->|/recovery/trigger| REC
-    REC -->|/cmd_vel_recovery P1| MUX
+    RX -->|/goal_pose| SM
+    SM -->|/cmd_vel_nav| MUX
     MUX -->|/cmd_vel| Motors["Robot Motors"]
-    REC -->|/recovery/status| SM
-    SM -.->|optional| N2
+    SM -->|/recovery/trigger| REC
+    REC -->|/cmd_vel_recovery| MUX
 ```
+
+---
+
+## Threading Model
+
+The single `camera_node.py` uses a producer-consumer pattern with three daemon threads:
+
+| Thread | Responsibility | Rate |
+|---|---|---|
+| Camera Thread | Owns `VideoCapture`, pushes `frame.copy()` to queues | 15 FPS |
+| Nav Worker Thread | Canny obstacle density + ArUco (on-demand) | 10 Hz |
+| Interaction Worker Thread | Haar face detection + QR scanning | 5 Hz / 2 Hz |
+
+**Race condition prevention**: Workers never touch the camera. Each receives independent frame copies via `queue.Queue(maxsize=2)` with drop-oldest policy.
 
 ---
 
 ## Receptionist Workflow
 
-The robot follows a five-state greeting workflow:
-
 ```
 IDLE -> GREETING -> WAITING_QR -> NAVIGATING -> ARRIVED -> IDLE
 ```
 
-1. **IDLE** -- Waits for a visitor (face detection via OV2710)
-2. **GREETING** -- Publishes greeting message for TTS
-3. **WAITING_QR** -- Scans QR code for destination name (30s timeout)
-4. **NAVIGATING** -- Sends goal to Nav2 and follows path
-5. **ARRIVED** -- Announces arrival and returns to idle
+| State | Trigger | Action |
+|---|---|---|
+| IDLE | Face detected | Greet visitor |
+| GREETING | Immediate | Publish greeting for TTS |
+| WAITING_QR | QR scanned or 30s timeout | Look up destination |
+| NAVIGATING | Goal reached | Send PoseStamped goal |
+| ARRIVED | 2s elapsed | Announce arrival, return to idle |
 
 ### Named Destinations
 
@@ -134,6 +144,20 @@ IDLE -> GREETING -> WAITING_QR -> NAVIGATING -> ARRIVED -> IDLE
 | `conference_room` | Conference room |
 | `hr_room` | HR department |
 | `manager_cabin` | Manager's office |
+
+---
+
+## Camera Health Monitoring
+
+The camera node monitors the C270 connection and handles disconnections:
+
+| State | Condition | Behavior |
+|---|---|---|
+| **ONLINE** | Frames arriving normally | Full vision processing |
+| **OFFLINE** | No frames for 2 seconds | Camera released, nav uses range-only |
+| **RECONNECTING** | Attempting reopen every 5s | Automatic recovery |
+
+**Graceful degradation**: When camera is offline, navigation continues with IR + ultrasonic sensors only.
 
 ---
 
@@ -151,13 +175,13 @@ IDLE -> GREETING -> WAITING_QR -> NAVIGATING -> ARRIVED -> IDLE
 
 | Layer | Technology |
 |---|---|
-| Middleware | ROS 2 (Humble/Jazzy) |
+| Middleware | ROS 2 Humble |
 | Language | Python |
 | Vision | OpenCV (Haar cascade, ArUco, QR) |
 | Navigation | Nav2 + custom A* planner |
 | SLAM | slam_toolbox |
 | Motor Controller | NanoClaw |
-| Compute | Raspberry Pi 5 |
+| Compute | Raspberry Pi 4 |
 
 ---
 
@@ -176,12 +200,11 @@ Welcoming-Robot/
 │   ├── vision_interaction.py              # Face detection + QR scanning
 │   └── vision_navigation.py              # ArUco detection + obstacle density
 ├── launch/
-│   └── navigation_launch.py               # ROS 2 launch file (8 nodes)
+│   └── navigation_launch.py               # ROS 2 launch file (7 nodes)
 ├── nodes/
 │   ├── __init__.py
+│   ├── camera_node.py                     # Unified threaded camera (C270)
 │   ├── cmd_vel_mux_node.py                # Velocity priority mux
-│   ├── interaction_camera_node.py         # OV2710 driver node
-│   ├── nav_camera_node.py                 # FIT0701 driver node
 │   ├── navigation_node.py                 # Main brain (state machine)
 │   ├── receptionist_node.py               # Greeting workflow orchestrator
 │   ├── recovery_node.py                   # Stuck handling
@@ -197,17 +220,18 @@ Welcoming-Robot/
 
 ## ROS Topics
 
-### Camera Topics (New)
+### Camera Topics
 
 | Topic | Type | Publisher | Subscriber |
 |---|---|---|---|
-| `/interaction_camera/image_raw` | Image | InteractionCameraNode | RViz |
-| `/visitor/detected` | Bool | InteractionCameraNode | ReceptionistNode |
-| `/visitor/face_count` | Int32 | InteractionCameraNode | ReceptionistNode |
-| `/visitor/qr_data` | String | InteractionCameraNode | ReceptionistNode |
-| `/nav_camera/image_raw` | Image | NavCameraNode | RViz |
-| `/nav_camera/obstacle_density` | Float32 | NavCameraNode | SensorFusionNode |
-| `/nav_camera/markers` | String | NavCameraNode | NavigationNode |
+| `/camera/image_raw` | Image | CameraNode | RViz (lazy) |
+| `/camera/status` | String | CameraNode | NavigationNode |
+| `/camera/enable_aruco` | Bool | Any | CameraNode |
+| `/visitor/detected` | Bool | CameraNode | ReceptionistNode |
+| `/visitor/face_count` | Int32 | CameraNode | ReceptionistNode |
+| `/visitor/qr_data` | String | CameraNode | ReceptionistNode |
+| `/nav_camera/obstacle_density` | Float32 | CameraNode | SensorFusionNode |
+| `/nav_camera/markers` | String (JSON) | CameraNode | NavigationNode |
 
 ### Navigation Topics
 
@@ -232,20 +256,40 @@ Welcoming-Robot/
 
 ---
 
+## CPU Budget (Raspberry Pi 4)
+
+| Process | Est. CPU % |
+|---|---|
+| ROS 2 + DDS | ~8% |
+| slam_toolbox | ~12% |
+| Camera capture (15 FPS) | ~3% |
+| Nav worker (Canny, 10 Hz) | ~5% |
+| Face detection (Haar, 5 Hz) | ~6% |
+| QR decoding (2 Hz) | ~3% |
+| Sensor fusion + controller | ~8% |
+| Recovery + mux + receptionist | ~2% |
+| **Total** | **~47%** |
+
+ArUco (when enabled): adds ~4%. Total with ArUco: ~51%.
+
+---
+
 ## How to Launch
 
 ```bash
-# Full stack (all 8 nodes + SLAM):
+# Full stack (all 7 nodes + SLAM):
 ros2 launch launch/navigation_launch.py
 
 # Individual nodes:
-python3 nodes/interaction_camera_node.py
-python3 nodes/nav_camera_node.py
-python3 nodes/receptionist_node.py
+python3 nodes/camera_node.py
 python3 nodes/sensor_fusion_node.py
 python3 nodes/navigation_node.py
 python3 nodes/recovery_node.py
 python3 nodes/cmd_vel_mux_node.py
+python3 nodes/receptionist_node.py
+
+# Enable ArUco detection at runtime:
+ros2 topic pub --once /camera/enable_aruco std_msgs/Bool "data: true"
 ```
 
 ## Send a Goal Manually
@@ -264,12 +308,14 @@ ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped \
 | Architecture Design | Completed |
 | ROS 2 Setup | Completed |
 | Core Modules | Completed |
-| Dual Camera Integration | Completed |
+| Single Camera Integration | Completed |
+| Threaded Vision Pipeline | Completed |
 | Receptionist Workflow | Completed |
 | Path Planning (A*) | Completed |
 | Controller (Pure Pursuit) | Completed |
 | Sensor Fusion | Completed |
 | cmd_vel Mux | Completed |
+| Camera Health Monitoring | Completed |
 | SLAM Integration | Pending |
 | Hardware Integration | Pending |
 | Simulation (Gazebo) | Pending |
@@ -279,12 +325,13 @@ ros2 topic pub --once /goal_pose geometry_msgs/PoseStamped \
 
 ## Design Principles
 
-- Modular and scalable architecture
-- Hardware-independent logic (core/ has zero ROS imports)
-- Clear separation of concerns (utils -> core -> nodes)
-- One camera per node, one responsibility per module
-- Graceful degradation (camera failure does not crash navigation)
+- Single camera owner (no device conflicts)
+- Thread-safe frame distribution (queue.Queue, frame.copy())
+- CPU-aware staggered processing rates
+- Graceful degradation (camera failure ≠ robot crash)
+- Hardware-independent vision logic (core/ has zero ROS imports)
 - Priority-based velocity arbitration (safety first)
+- On-demand ArUco (disabled by default to save CPU)
 
 ---
 

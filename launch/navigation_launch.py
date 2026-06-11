@@ -7,9 +7,8 @@ launch/navigation_launch.py -- ROS 2 launch file that brings up:
   3. navigation_node
   4. recovery_node
   5. cmd_vel_mux_node
-  6. interaction_camera_node  (OV2710)
-  7. nav_camera_node          (FIT0701)
-  8. receptionist_node
+  6. camera_node          (Logitech C270 -- unified threaded node)
+  7. receptionist_node
 
 Usage
 -----
@@ -67,13 +66,12 @@ def generate_launch_description():
             output="screen",
         )
 
-    # -- 2-8. All project nodes -------------------------
+    # -- 2-7. All project nodes -------------------------
     sensor_fusion_proc = _node_proc("sensor_fusion_node.py", "sensor_fusion_node")
     navigation_proc = _node_proc("navigation_node.py", "navigation_node")
     recovery_proc = _node_proc("recovery_node.py", "recovery_node")
     cmd_vel_mux_proc = _node_proc("cmd_vel_mux_node.py", "cmd_vel_mux_node")
-    interaction_cam_proc = _node_proc("interaction_camera_node.py", "interaction_camera_node")
-    nav_cam_proc = _node_proc("nav_camera_node.py", "nav_camera_node")
+    camera_proc = _node_proc("camera_node.py", "camera_node")
     receptionist_proc = _node_proc("receptionist_node.py", "receptionist_node")
 
     # -- Assemble --------------------------------------
@@ -87,8 +85,7 @@ def generate_launch_description():
     ld.add_action(navigation_proc)
     ld.add_action(recovery_proc)
     ld.add_action(cmd_vel_mux_proc)
-    ld.add_action(interaction_cam_proc)
-    ld.add_action(nav_cam_proc)
+    ld.add_action(camera_proc)
     ld.add_action(receptionist_proc)
 
     return ld
