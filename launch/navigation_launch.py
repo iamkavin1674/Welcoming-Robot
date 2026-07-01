@@ -9,6 +9,8 @@ launch/navigation_launch.py -- ROS 2 launch file that brings up:
   5. cmd_vel_mux_node
   6. camera_node          (Logitech C270 -- unified threaded node)
   7. receptionist_node
+  8. llm_node             (Gemini AI greeting service)
+  9. tts_node             (Text-to-speech service)
 
 Usage
 -----
@@ -66,13 +68,15 @@ def generate_launch_description():
             output="screen",
         )
 
-    # -- 2-7. All project nodes -------------------------
+    # -- 2-9. All project nodes -------------------------
     sensor_fusion_proc = _node_proc("sensor_fusion_node.py", "sensor_fusion_node")
     navigation_proc = _node_proc("navigation_node.py", "navigation_node")
     recovery_proc = _node_proc("recovery_node.py", "recovery_node")
     cmd_vel_mux_proc = _node_proc("cmd_vel_mux_node.py", "cmd_vel_mux_node")
     camera_proc = _node_proc("camera_node.py", "camera_node")
     receptionist_proc = _node_proc("receptionist_node.py", "receptionist_node")
+    llm_proc = _node_proc("llm_node.py", "llm_node")
+    tts_proc = _node_proc("tts_node.py", "tts_node")
 
     # -- Assemble --------------------------------------
     ld = LaunchDescription()
@@ -87,6 +91,8 @@ def generate_launch_description():
     ld.add_action(cmd_vel_mux_proc)
     ld.add_action(camera_proc)
     ld.add_action(receptionist_proc)
+    ld.add_action(llm_proc)
+    ld.add_action(tts_proc)
 
     return ld
 

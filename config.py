@@ -153,3 +153,19 @@ SLAM_SAVE_MAP_SERVICE: str = "/slam_toolbox/save_map"
 REPLAN_DANGER_SPIKE: float = 0.60             # danger score jump triggers replan
 REPLAN_COOLDOWN: float = 2.0                  # seconds between replans
 
+# ─────────────────────────────────────────────
+#  LLM (Gemini)
+# ─────────────────────────────────────────────
+GEMINI_MODEL: str = "gemini-2.0-flash"        # fast + cheap model for greetings
+GEMINI_MAX_RETRIES: int = 3                   # retry on transient API failures
+GEMINI_TIMEOUT: float = 10.0                  # seconds per API call
+LLM_RESPONSE_TIMEOUT: float = 10.0           # seconds receptionist waits for LLM
+LLM_FALLBACK_GREETING: str = "Welcome! How can I help you today?"
+
+# ─────────────────────────────────────────────
+#  TTS (Text-to-Speech)
+# ─────────────────────────────────────────────
+TTS_RATE: int = 160                           # words per minute
+TTS_VOLUME: float = 1.0                       # 0.0 to 1.0
+
+

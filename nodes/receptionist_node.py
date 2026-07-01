@@ -1,23 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-nodes/receptionist_node.py — Receptionist greeting-workflow orchestrator.
+nodes/receptionist_node.py -- Receptionist greeting-workflow orchestrator.
 
-Implements a five-state machine that detects a visitor, greets them,
+Implements a six-state machine that detects a visitor, requests an
+AI-generated greeting from the LLM node, speaks it via the TTS node,
 reads a QR-code destination, navigates to the named location, and
 announces arrival before returning to idle.
 
 State Machine
-    IDLE → GREETING → WAITING_QR → NAVIGATING → ARRIVED → IDLE
+    IDLE -> GREETING -> AWAITING_LLM -> WAITING_QR -> NAVIGATING -> ARRIVED -> IDLE
 
 Subscriptions
-    /visitor/detected          std_msgs/Bool    — visitor presence flag
-    /visitor/qr_data           std_msgs/String  — scanned QR payload (destination name)
-    /navigation/goal_reached   std_msgs/Bool    — navigation-complete signal
+    /visitor/detected          std_msgs/Bool    -- visitor presence flag
+    /visitor/qr_data           std_msgs/String  -- scanned QR payload (destination name)
+    /navigation/goal_reached   std_msgs/Bool    -- navigation-complete signal
+    /llm_response              std_msgs/String  -- AI-generated greeting text
 
 Publications
-    /goal_pose                 geometry_msgs/PoseStamped  — navigation goal
-    /receptionist/status       std_msgs/String            — status for UI / logging
-    /receptionist/greeting     std_msgs/String            — TTS greeting text
+    /goal_pose                 geometry_msgs/PoseStamped  -- navigation goal
+    /receptionist/status       std_msgs/String            -- status for UI / logging
+    /receptionist/greeting     std_msgs/String            -- greeting text
+    /llm_request               std_msgs/String            -- request to LLM node
+    /tts_request               std_msgs/String            -- text for TTS node
 """
 
 import sys
@@ -37,6 +41,8 @@ from config import (
     GREETING_MESSAGE,
     VISITOR_PRESENCE_COOLDOWN,
     MAP_FRAME,
+    LLM_RESPONSE_TIMEOUT,
+    LLM_FALLBACK_GREETING,
 )
 
 
@@ -48,9 +54,10 @@ class _State(enum.Enum):
     """Receptionist workflow states."""
     IDLE = 0
     GREETING = 1
-    WAITING_QR = 2
-    NAVIGATING = 3
-    ARRIVED = 4
+    AWAITING_LLM = 2
+    WAITING_QR = 3
+    NAVIGATING = 4
+    ARRIVED = 5
 
 
 # ──────────────────────────────────────────────
@@ -80,6 +87,8 @@ class ReceptionistNode(Node):
         self._visitor_detected: bool = False
         self._qr_payload: str = ""
         self._goal_reached: bool = False
+        self._llm_response: str = ""                  # set by /llm_response callback
+        self._llm_request_time: float = 0.0            # when LLM request was sent
 
         # ── Publishers ──
         self._pub_goal = self.create_publisher(
@@ -91,6 +100,12 @@ class ReceptionistNode(Node):
         self._pub_greeting = self.create_publisher(
             String, "/receptionist/greeting", 10
         )
+        self._pub_llm_request = self.create_publisher(
+            String, "/llm_request", 10
+        )
+        self._pub_tts_request = self.create_publisher(
+            String, "/tts_request", 10
+        )
 
         # ── Subscribers ──
         self.create_subscription(
@@ -101,6 +116,9 @@ class ReceptionistNode(Node):
         )
         self.create_subscription(
             Bool, "/navigation/goal_reached", self._goal_reached_cb, 10
+        )
+        self.create_subscription(
+            String, "/llm_response", self._llm_response_cb, 10
         )
 
         # ── Tick Timer (10 Hz) ──
@@ -126,6 +144,11 @@ class ReceptionistNode(Node):
         """Latch goal-reached flag for the tick to consume."""
         if msg.data:
             self._goal_reached = True
+
+    def _llm_response_cb(self, msg: String) -> None:
+        """Store LLM response for the AWAITING_LLM state to consume."""
+        if msg.data:
+            self._llm_response = msg.data.strip()
 
     # ══════════════════════════════════════════
     #  Helper Publishers
@@ -194,6 +217,11 @@ class ReceptionistNode(Node):
             self._tick_greeting()
             return
 
+        # ─── AWAITING_LLM ────────────────────
+        if self._state == _State.AWAITING_LLM:
+            self._tick_awaiting_llm()
+            return
+
         # ─── WAITING_QR ──────────────────────
         if self._state == _State.WAITING_QR:
             self._tick_waiting_qr()
@@ -227,15 +255,55 @@ class ReceptionistNode(Node):
         self._state = _State.GREETING
 
     def _tick_greeting(self) -> None:
-        """GREETING: publish the greeting then advance to WAITING_QR."""
-        self._publish_greeting(GREETING_MESSAGE)
+        """GREETING: request an AI greeting from the LLM node."""
+        # Publish request to LLM node
+        request_msg = String()
+        request_msg.data = "greeting"
+        self._pub_llm_request.publish(request_msg)
+
+        # Reset LLM response and start timeout clock
+        self._llm_response = ""
+        self._llm_request_time = time.monotonic()
+
+        self._publish_status("Requesting AI greeting ...")
+        self.get_logger().info(
+            "LLM request sent — transitioning to AWAITING_LLM."
+        )
+        self._state = _State.AWAITING_LLM
+
+    def _tick_awaiting_llm(self) -> None:
+        """AWAITING_LLM: wait for the LLM response, then greet and
+        advance to WAITING_QR."""
+        # Check for timeout
+        elapsed: float = time.monotonic() - self._llm_request_time
+        if elapsed > LLM_RESPONSE_TIMEOUT:
+            self.get_logger().warn(
+                f"LLM response timed out after {LLM_RESPONSE_TIMEOUT:.0f}s "
+                "— using fallback greeting."
+            )
+            greeting_text = LLM_FALLBACK_GREETING
+        elif self._llm_response:
+            greeting_text = self._llm_response
+            self._llm_response = ""  # consume
+        else:
+            return  # still waiting
+
+        # Publish greeting to TTS, greeting topic, and status
+        tts_msg = String()
+        tts_msg.data = greeting_text
+        self._pub_tts_request.publish(tts_msg)
+
+        self._publish_greeting(greeting_text)
         self._publish_status("Greeting visitor — waiting for QR code.")
 
         # Reset QR data so we only accept fresh scans
         self._qr_payload = ""
         self._qr_wait_start = time.monotonic()
 
-        self.get_logger().info("Greeting sent — transitioning to WAITING_QR.")
+        self.get_logger().info(
+            f"Greeting spoken: '{greeting_text}' — "
+            "transitioning to WAITING_QR."
+        )
         self._state = _State.WAITING_QR
 
     def _tick_waiting_qr(self) -> None:
@@ -310,6 +378,11 @@ class ReceptionistNode(Node):
             self._publish_status(
                 f"Arrived at {self._destination_name}."
             )
+
+            # Also speak the arrival announcement
+            tts_msg = String()
+            tts_msg.data = arrival_text
+            self._pub_tts_request.publish(tts_msg)
 
         if elapsed >= _ARRIVAL_DISPLAY:
             self.get_logger().info(
